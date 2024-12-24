@@ -1,15 +1,15 @@
-# Gunakan image Python 3.12 sebagai base
-FROM python:3.12
+# Gunakan gambar dasar Python
+FROM python:3.12-slim
 
-# Setel direktori kerja ke root
+# Atur direktori kerja
 WORKDIR /
 
-# Salin file requirements dan install dependensi
+# Salin file requirements.txt dan instal dependensi
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Salin semua file ke dalam kontainer
+# Salin kode aplikasi
 COPY . .
 
-# Perintah untuk menjalankan aplikasi
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Jalankan aplikasi
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "${PORT:-8080}"]
