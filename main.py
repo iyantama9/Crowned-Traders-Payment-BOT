@@ -66,11 +66,13 @@ def gsheet(user_id, email, name, phone, role_name, order_id, payment_status, she
         valueInputOption='RAW', body=body).execute()
     print(f"{result.get('updates').get('updatedCells')} cells appended.")
 
-# Registration and role management
-START_REGISTRATION_DATE = datetime(2024, 12, 25)
-REGISTRATION_PERIOD_DAYS = 7
-CLASS_DURATION_DAYS = 30
-ROLE_DURATION_DAYS = [30, 29, 28, 27, 26, 25, 24]
+# Periode pendaftaran dan durasi kelas
+START_REGISTRATION_DATE = datetime(2024, 12, 25)  # Tanggal mulai pendaftaran
+REGISTRATION_PERIOD_DAYS = 7  # Periode pendaftaran
+CLASS_DURATION_DAYS = 30  # Durasi kelas
+
+# Menghitung tanggal akhir kelas
+END_CLASS_DATE = START_REGISTRATION_DATE + timedelta(days=CLASS_DURATION_DAYS)  # Kelas berakhir 30 hari setelah pendaftaran dimulai
 
 async def remove_role(guild):
     now = time.time()  
@@ -84,12 +86,19 @@ async def remove_role(guild):
 
 @tasks.loop(hours=24)
 async def schedule_role_removal():
-    global START_REGISTRATION_DATE
+    global START_REGISTRATION_DATE, END_CLASS_DATE
     now = datetime.now()
-    if now >= START_REGISTRATION_DATE + timedelta(days=REGISTRATION_PERIOD_DAYS + CLASS_DURATION_DAYS):
+    if now >= END_CLASS_DATE:  # Cek jika sudah melewati tanggal akhir kelas
         guild = bot.get_guild(GUILD_ID)
         await remove_role(guild)
-        START_REGISTRATION_DATE += timedelta(days=30)
+        
+        # Set tanggal mulai pendaftaran untuk periode berikutnya
+        START_REGISTRATION_DATE = END_CLASS_DATE + timedelta(days=1)  # Pendaftaran dibuka sehari setelah kelas berakhir
+        END_CLASS_DATE = START_REGISTRATION_DATE + timedelta(days=CLASS_DURATION_DAYS)  # Hitung ulang tanggal akhir kelas
+        
+        # Menginformasikan bahwa pendaftaran telah dibuka kembali
+        channel = bot.get_channel(YOUR_CHANNEL_ID)  # Ganti dengan ID channel yang sesuai
+        await channel.send(f"📅 Pendaftaran untuk kelas baru dibuka! Mulai dari {START_REGISTRATION_DATE.strftime('%d-%m-%Y')} hingga {START_REGISTRATION_DATE + timedelta(days=REGISTRATION_PERIOD_DAYS)}.")
 
 async def add_fellows(guild, user_id, role_name):
     role = discord.utils.get(guild.roles, name=role_name)
@@ -100,16 +109,9 @@ async def add_fellows(guild, user_id, role_name):
             await member.add_roles(role)
             print(f"Role {role_name} telah ditambahkan ke {member.name}") 
             
-            if role_name == "THE FELLOWS MONTHLY":
-                registration_day = (datetime.now() - START_REGISTRATION_DATE).days
-                if 0 <= registration_day < len(ROLE_DURATION_DAYS):
-                    expiry_time = time.time() + ROLE_DURATION_DAYS[registration_day] * 24 * 60 * 60
-                    role_expiry[user_id] = (role, expiry_time)
-                else:
-                    print("Hari pendaftaran di luar jangkauan.")
-            else:
-                expiry_time = time.time() + 30 * 24 * 60 * 60
-                role_expiry[user_id] = (role, expiry_time)
+            # Set expiry time for the role
+            expiry_time = time.time() + 30 * 24 * 60 * 60  # Set expiry time for 30 days
+            role_expiry[user_id] = (role, expiry_time)
         except RuntimeError as e:
             print(f"Kesalahan saat menambahkan role: {e}")
     else:
@@ -129,11 +131,7 @@ app.add_middleware(
 @bot.command()
 async def beli(ctx):
     now = datetime.now()
-    if now < START_REGISTRATION_DATE or now >= START_REGISTRATION_DATE + timedelta(days=REGISTRATION_PERIOD_DAYS):
-        next_registration_date = START_REGISTRATION_DATE + timedelta(days=30)
-        await ctx.send(f"📅 Pendaftaran untuk bulan ini sudah ditutup, silahkan mendaftar lagi pada periode selanjutnya pada {next_registration_date.strftime('%d-%m-%Y')}.")
-        return
-
+    
     await ctx.send("🎉 **Pembayaran Role**\nHalo! 👋 Silakan masukkan email kamu untuk memulai proses pembayaran:")
     
     def check_email(m):
@@ -199,6 +197,13 @@ async def beli(ctx):
                 "Content-Type": "application/json",
                 "Authorization": f"Basic {encoded_key}"
             }
+
+            # Check registration period only for THE FELLOWS MONTHLY
+            if role_name == "THE FELLOWS MONTHLY":
+                if now < START_REGISTRATION_DATE or now >= START_REGISTRATION_DATE + timedelta(days=REGISTRATION_PERIOD_DAYS):
+                    next_registration_date = START_REGISTRATION_DATE + timedelta(days=30)
+                    await interaction.response.send_message(f"📅 Pendaftaran untuk role '{role_name}' sudah ditutup, silahkan mendaftar lagi pada periode selanjutnya pada {next_registration_date.strftime('%d-%m-%Y')}.", ephemeral=True)
+                    return
 
             try:
                 response = requests.post(MIDTRANS_ENDPOINT, json=payload, headers=headers)
