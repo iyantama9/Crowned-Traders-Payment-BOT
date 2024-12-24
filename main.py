@@ -51,7 +51,7 @@ def load_serviceaccount(url):
     return response.json()
 
 service_account_json = load_serviceaccount(JSON_FILE_URL)
-SCOPES = ['https://spreadsheets.google.com/feeds']
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 credentials = service_account.Credentials.from_service_account_info(service_account_json, scopes=SCOPES)
 service = build('sheets', 'v4', credentials=credentials)
 
@@ -78,7 +78,7 @@ async def remove_role(guild):
         if now >= expiry_time:  
             member = guild.get_member(user_id)
             if member and role:
-                await member.remove_role(role)
+                await member.remove_roles(role)
                 print(f"Role {role.name} telah dihapus dari {member.name}")
             del role_expiry[user_id] 
 
@@ -290,7 +290,8 @@ async def payment_notification(request: Request):
 
 # FastAPI server startup
 async def start_fastapi():
-    config = uvicorn.Config(app, host="0.0.0.0", port=8080, log_level="info")
+    port = int(os.getenv('PORT', 8080)) 
+    config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
     server = uvicorn.Server(config)
     await server.serve()
 
