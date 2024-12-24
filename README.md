@@ -2,6 +2,8 @@
 
 This project is a Discord bot built using the `discord.py` library, integrated with a FastAPI application for handling payment notifications and managing user roles. The bot allows users to purchase roles through a payment gateway (Midtrans) and manages role assignments based on payment status.
 
+*I'll create a raw version that you can easily customize to suit your needs soon
+
 ## Features
 
 - **Role Management**: Users can purchase roles that grant them access to specific features within the Discord server.
