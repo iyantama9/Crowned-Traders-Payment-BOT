@@ -1,20 +1,15 @@
-# Use the official Python image from the Docker Hub
-FROM python:3.12.8-slim
+# Gunakan image Python 3.12 sebagai base
+FROM python:3.12
 
-# Set the working directory
-WORKDIR /app
+# Setel direktori kerja ke root
+WORKDIR /
 
-# Copy the requirements file
+# Salin file requirements dan install dependensi
 COPY requirements.txt .
-
-# Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application code
+# Salin semua file ke dalam kontainer
 COPY . .
 
-# Set environment variables
-ENV PORT=8080
-
-# Command to run the application
+# Perintah untuk menjalankan aplikasi
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
