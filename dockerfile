@@ -17,4 +17,4 @@ COPY . .
 ENV PORT=8080
 
 # Command to run the application
-CMD ["python", "main.py"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
