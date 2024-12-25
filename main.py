@@ -13,6 +13,7 @@ import uvicorn
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
+import json
 
 # Load environment variables
 load_dotenv()
@@ -43,6 +44,7 @@ user_names = {}
 user_phone_numbers = {}
 payment_status = {}
 role_expiry = {}
+user_members = {}  # Store user ID and name instead of Member objects
 
 # Google Sheets setup
 def load_serviceaccount(url):
@@ -66,13 +68,13 @@ def gsheet(user_id, email, name, phone, role_name, order_id, payment_status, she
         valueInputOption='RAW', body=body).execute()
     print(f"{result.get('updates').get('updatedCells')} cells appended.")
 
-# Periode pendaftaran dan durasi kelas
-START_REGISTRATION_DATE = datetime(2024, 12, 25)  # Tanggal mulai pendaftaran
-REGISTRATION_PERIOD_DAYS = 7  # Periode pendaftaran
-CLASS_DURATION_DAYS = 30  # Durasi kelas
+# Registration period and class duration
+START_REGISTRATION_DATE = datetime(2024, 12, 25)  
+REGISTRATION_PERIOD_DAYS = 7 
+CLASS_DURATION_DAYS = 30 
 
-# Menghitung tanggal akhir kelas
-END_CLASS_DATE = START_REGISTRATION_DATE + timedelta(days=CLASS_DURATION_DAYS)  # Kelas berakhir 30 hari setelah pendaftaran dimulai
+# Calculate end class date
+END_CLASS_DATE = START_REGISTRATION_DATE + timedelta(days=CLASS_DURATION_DAYS) 
 
 async def remove_role(guild):
     now = time.time()  
@@ -88,34 +90,47 @@ async def remove_role(guild):
 async def schedule_role_removal():
     global START_REGISTRATION_DATE, END_CLASS_DATE
     now = datetime.now()
-    if now >= END_CLASS_DATE:  # Cek jika sudah melewati tanggal akhir kelas
+    
+    if now >= END_CLASS_DATE: 
         guild = bot.get_guild(GUILD_ID)
         await remove_role(guild)
         
-        # Set tanggal mulai pendaftaran untuk periode berikutnya
-        START_REGISTRATION_DATE = END_CLASS_DATE + timedelta(days=1)  # Pendaftaran dibuka sehari setelah kelas berakhir
-        END_CLASS_DATE = START_REGISTRATION_DATE + timedelta(days=CLASS_DURATION_DAYS)  # Hitung ulang tanggal akhir kelas
+        START_REGISTRATION_DATE = END_CLASS_DATE + timedelta(days=1) 
+        END_CLASS_DATE = START_REGISTRATION_DATE + timedelta(days=CLASS_DURATION_DAYS)  
         
-        # Menginformasikan bahwa pendaftaran telah dibuka kembali
-        channel = bot.get_channel(YOUR_CHANNEL_ID)  # Ganti dengan ID channel yang sesuai
-        await channel.send(f"📅 Pendaftaran untuk kelas baru dibuka! Mulai dari {START_REGISTRATION_DATE.strftime('%d-%m-%Y')} hingga {START_REGISTRATION_DATE + timedelta(days=REGISTRATION_PERIOD_DAYS)}.")
+        for channel in guild.text_channels:
+            await channel.send(f"📅 Pendaftaran untuk kelas baru dibuka! Mulai dari {START_REGISTRATION_DATE.strftime('%d-%m-%Y')} hingga {START_REGISTRATION_DATE + timedelta(days=REGISTRATION_PERIOD_DAYS)}.")
 
-async def add_fellows(guild, user_id, role_name):
+async def function_role(guild, user_id, role_name, duration_days=30):
     role = discord.utils.get(guild.roles, name=role_name)
     member = guild.get_member(user_id)
     
-    if member and role:
-        try:
-            await member.add_roles(role)
-            print(f"Role {role_name} telah ditambahkan ke {member.name}") 
-            
-            # Set expiry time for the role
-            expiry_time = time.time() + 30 * 24 * 60 * 60  # Set expiry time for 30 days
-            role_expiry[user_id] = (role, expiry_time)
-        except RuntimeError as e:
-            print(f"Kesalahan saat menambahkan role: {e}")
-    else:
-        print("Member atau role tidak ditemukan.")
+    if not member:
+        print(f"Member dengan ID {user_id} tidak ditemukan di guild {guild.name}.")
+        return
+    
+    if not role:
+        print(f"Role '{role_name}' tidak ditemukan di guild {guild.name}.")
+        return
+    
+    bot_member = guild.get_member(bot.user.id)
+    bot_top_role = bot_member.top_role
+    if role.position >= bot_top_role.position:
+        print(f"Role '{role_name}' memiliki posisi di atas atau sama dengan role bot di guild {guild.name}.")
+        return
+    
+    try:
+        await member.add_roles(role)
+        print(f"Role {role_name} telah ditambahkan ke {member.name} (ID: {member.id})")
+        
+        expiry_time = time.time() + duration_days * 24 * 60 * 60  
+        role_expiry[user_id] = (role, expiry_time)
+    except discord.Forbidden:
+        print(f"Bot tidak memiliki izin untuk menambahkan role {role_name} ke {member.name} (ID: {member.id}).")
+    except discord.HTTPException as e:
+        print(f"Terjadi kesalahan saat menambahkan role {role_name} ke {member.name} (ID: {member.id}): {e}")
+    except Exception as e:
+        print(f"Terjadi kesalahan tidak terduga saat menambahkan role {role_name} ke {member.name} (ID: {member.id}): {e}")
 
 # FastAPI setup
 app = FastAPI()
@@ -127,13 +142,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Test link for the role
+test_link = "https://forms.gle/4caBzgzJJhhXsR5L8"
+
 # Discord bot commands
 @bot.command()
 async def beli(ctx):
+    print(f"Perintah !beli dipanggil oleh: {ctx.author.name} (ID: {ctx.author.id})")  
+
+    # Clear previous user data if exists
+    if ctx.author.id in user_emails:  
+        del user_emails[ctx.author.id]
+    if ctx.author.id in user_names:  
+        del user_names[ctx.author.id]
+    if ctx.author.id in user_phone_numbers:  
+        del user_phone_numbers[ctx.author.id]
+
     now = datetime.now()
-    
     await ctx.send("🎉 **Pembayaran Role**\nHalo! 👋 Silakan masukkan email kamu untuk memulai proses pembayaran:")
-    
+    print(f"Pesan email dikirim ke {ctx.author.name} (ID: {ctx.author.id})") 
+
+    user_members[ctx.author.id] = ctx.author.name  # Store only the name
+
     def check_email(m):
         return m.author == ctx.author and m.channel == ctx.channel
 
@@ -146,7 +176,8 @@ async def beli(ctx):
         user_emails[ctx.author.id] = email
 
         await ctx.send("📋 **Masukkan Nama Lengkap**\nSilakan masukkan nama lengkap kamu:")
-        
+        print(f"Pesan nama dikirim ke {ctx.author.name} (ID: {ctx.author.id})") 
+
         def check_name(m):
             return m.author == ctx.author and m.channel == ctx.channel
 
@@ -155,7 +186,8 @@ async def beli(ctx):
         user_names[ctx.author.id] = name
 
         await ctx.send("📞 **Masukkan Nomor Telepon**\nSilakan masukkan nomor telepon kamu:\n*Data kamu akan Yumi gunakan ketika ada kesalahan dalam pembayaran atau sistem kami.*")
-        
+        print(f"Pesan nomor telepon dikirim ke {ctx.author.name} (ID: {ctx.author.id})")  
+
         def check_phone(m):
             return m.author == ctx.author and m.channel == ctx.channel
 
@@ -171,62 +203,52 @@ async def beli(ctx):
         select = discord.ui.Select(placeholder="Pilih role yang ingin kamu beli...", options=options)
 
         async def select_callback(interaction):
+            await interaction.response.defer()  # Menunda respons untuk menghindari timeout
             role_name = select.values[0]
-            order_id = f'order-{ctx.author.id}-{int(time.time())}'
-            print(f"Email: {email}, Name: {name}, Phone: {phone}")
+            print(f"Role yang dipilih: {role_name}")  # Log role yang dipilih
+            
+            if role_name == "THE WARRIORS MONTHLY":
+                # Send test link and ask for score
+                await interaction.followup.send(
+                    f"🔗 **Silakan kerjakan tes berikut untuk mendapatkan akses ke role '{role_name}':**\n{test_link}\n\n**Masukkan nilai kamu (0-100):**"
+                )
 
-            price = 150000
-            payload = {
-                "transaction_details": {
-                    "order_id": order_id,
-                    "gross_amount": price
-                },
-                "item_details": [{
-                    "id": "item-123",
-                    "price": price,
-                    "quantity": 1,
-                    "name": role_name
-                }],
-                "customer_details": {
-                    "first_name": ctx.author.name,
-                    "email": email
-                }
-            }
+                def check_score(m):
+                    return m.author == ctx.author and m.channel == ctx.channel
 
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Basic {encoded_key}"
-            }
+                try:
+                    score_msg = await bot.wait_for('message', check=check_score, timeout=60.0)
+                    score = int(score_msg.content)
+                    print(f"Nilai yang dimasukkan: {score}") 
 
-            # Check registration period only for THE FELLOWS MONTHLY
-            if role_name == "THE FELLOWS MONTHLY":
-                if now < START_REGISTRATION_DATE or now >= START_REGISTRATION_DATE + timedelta(days=REGISTRATION_PERIOD_DAYS):
-                    next_registration_date = START_REGISTRATION_DATE + timedelta(days=30)
-                    await interaction.response.send_message(f"📅 Pendaftaran untuk role '{role_name}' sudah ditutup, silahkan mendaftar lagi pada periode selanjutnya pada {next_registration_date.strftime('%d-%m-%Y')}.", ephemeral=True)
+                    if score < 80:
+                        await interaction.followup.send(
+                            "❌ **Nilai kamu tidak cukup untuk mendapatkan role 'THE WARRIORS MONTHLY'.**\n\n🔍 **Silakan pilih role 'THE FELLOWS MONTHLY':**"
+                        )
+                        return 
+                    
+                    else:
+                        # Proceed to payment for THE WARRIORS MONTHLY
+                        await interaction.followup.send(
+                            f"🎊 **Selamat!** Nilai kamu cukup untuk mendapatkan role '{role_name}'.\n\nSilakan lakukan pembayaran di sini:"
+                        )
+                        
+                        try:
+                            # Call the process_payment function to handle the payment
+                            await process_payment(interaction, "THE WARRIORS MONTHLY", email, name, phone, select)
+                        except Exception as e:
+                            print(f"Terjadi kesalahan saat memproses pembayaran untuk {interaction.user.name} (ID: {interaction.user.id}): {e}")
+                            await interaction.followup.send("❌ **Kesalahan**\nTerjadi kesalahan saat memproses pembayaran. Silakan coba lagi nanti.", ephemeral=True)
+
+                except ValueError:
+                    await interaction.followup.send("❌ **Masukkan nilai yang valid (0-100).**")
                     return
-
-            try:
-                response = requests.post(MIDTRANS_ENDPOINT, json=payload, headers=headers)
-                response.raise_for_status()
-                payment_url = response.json().get('redirect_url')
-
-                if payment_url:
-                    payment_status[order_id] = {'status': 'pending', 'role': role_name, 'user_id': ctx.author.id}
-                    
-                    button = discord.ui.Button(label="💳 Bayar di sini", url=payment_url, style=discord.ButtonStyle.success)
-                    view = discord.ui.View()
-                    view.add_item(button)
-                    
-                    await interaction.response.send_message("🎊 **Pembayaran Diperlukan**\nSilakan lakukan pembayaran di sini:", view=view, ephemeral=True)
-                else:
-                    await interaction.response.send_message("❌ **Kesalahan**\nTerjadi kesalahan saat membuat pembayaran. Tidak ada URL pembayaran yang diterima.", ephemeral=True)
-            except requests.exceptions.RequestException as e:
-                await interaction.response.send_message("❌ **Kesalahan**\nTerjadi kesalahan saat menghubungi Midtrans API. Coba lagi nanti, ya!", ephemeral=True)
-                print(f"Error: {e}")
-                print(f"Response: {response.text}")
-
-            select.disabled = True
-            await interaction.message.edit(view=view)
+                except asyncio.TimeoutError:
+                    await interaction.followup.send("⏰ **Waktu habis! Silakan coba lagi.**")
+                    return
+                
+            elif role_name == "THE FELLOWS MONTHLY":
+                await process_payment(interaction, "THE FELLOWS MONTHLY", email, name, phone, select)
 
         select.callback = select_callback
         view = discord.ui.View()
@@ -236,24 +258,69 @@ async def beli(ctx):
     except asyncio.TimeoutError:
         await ctx.send("⏰ **Waktu Habis**\nWaktu habis! Silakan coba lagi dengan `!beli`.")
 
-@bot.command()
-async def check_payment(ctx):
-    order_id_prefix = f'order-{ctx.author.id}-'
-    matching_orders = [oid for oid in payment_status.keys() if oid.startswith(order_id_prefix)]
-    
-    if matching_orders:
-        status = payment_status[matching_orders[0]]['status']
-        await ctx.send(f"📜 **Status Pembayaran**\nStatus pembayaran untuk order ID `{matching_orders[0]}`: **{status}**")
-    else:
-        await ctx.send("❌ **Belum Ada Pembayaran**\nBelum ada pembayaran yang dilakukan. Yuk, beli role premium sekarang!")
+async def process_payment(interaction, role_name, email, name, phone, select):
+    order_id = f'order-{interaction.user.id}-{int(time.time())}'
+    print(f"Email: {email}, Name: {name}, Phone: {phone}")
 
-@bot.command()
-async def hello(ctx):
-    await ctx.send(f"👋 **Selamat Datang**\nHollaaa, {ctx.author.name}! Welcome to Crowned Traders 🎉")
+    price = 150000
+    payload = {
+        "transaction_details": {
+            "order_id": order_id,
+            "gross_amount": price
+        },
+        "item_details": [{
+            "id": "item-123",
+            "price": price,
+            "quantity": 1,
+            "name": role_name
+        }],
+        "customer_details": {
+            "first_name": interaction.user.name,
+            "email": email
+        }
+    }
 
-@bot.command()
-async def info(ctx):
-    await ctx.send("ℹ️ **Hollaaa Yumi Di sini!**\nYumi berfungsi untuk membantu kamu membeli role premium di sini! 🎊")
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Basic {encoded_key}"
+    }
+
+    try:
+        response = requests.post(MIDTRANS_ENDPOINT, json=payload, headers=headers)
+        print(f"Midtrans response: {response.json()}") 
+        response.raise_for_status()
+        payment_url = response.json().get('redirect_url')
+
+        if payment_url:
+            # Disable previous payment link if exists
+            for oid in payment_status.keys():
+                if payment_status[oid]['user_id'] == interaction.user.id:
+                    payment_status[oid]['status'] = 'canceled'  # Mark previous order as canceled
+
+            payment_status[order_id] = {'status': 'pending', 'role': role_name, 'user_id': interaction.user.id}
+
+            # Create the payment button
+            button = discord.ui.Button(label="💳 Bayar di sini", url=payment_url, style=discord.ButtonStyle.success)
+            view = discord.ui.View()
+            view.add_item(button)
+
+            # Send the payment message with the button
+            await interaction.followup.send(
+                f"🎊 **Pembayaran Diperlukan**\nSilakan lakukan pembayaran di sini:",
+                view=view,
+                ephemeral=True
+            )
+
+            # Disable the original select dropdown if payment is initiated
+            select.disabled = True  # Disable the original select dropdown
+            await interaction.message.edit(view=view)  
+
+        else:
+            await interaction.followup.send("❌ **Kesalahan**\nTerjadi kesalahan saat membuat pembayaran. Tidak ada URL pembayaran yang diterima.", ephemeral=True)
+    except requests.exceptions.RequestException as e:
+        await interaction.followup.send("❌ **Kesalahan**\nTerjadi kesalahan saat menghubungi Midtrans API. Coba lagi nanti, ya!", ephemeral=True)
+        print(f"Error: {e}")
+        print(f"Response: {response.text}")
 
 # FastAPI payment notification endpoint
 @app.post('/payment-notification')
@@ -273,7 +340,8 @@ async def payment_notification(request: Request):
                 guild = bot.get_guild(GUILD_ID)
                 role_name = payment_status[order_id]['role']
                 
-                bot.loop.create_task(add_fellows(guild, user_id, role_name))
+                # Call function_role to add the role
+                bot.loop.create_task(function_role(guild, int(user_id), role_name))
                 
                 payment_status[order_id]['status'] = 'settled'
                 print(f"Update payment status for order_id {order_id}: settled")
@@ -292,6 +360,98 @@ async def payment_notification(request: Request):
             print(f"Order ID {order_id} not found in payment_status.")
     
     return JSONResponse(content={"status": "ignored"})
+
+@bot.event
+async def on_ready():
+    load_data()  # Load data when the bot is ready
+    print(f"Bot telah siap sebagai {bot.user.name} (ID: {bot.user.id})")
+    guild = bot.get_guild(GUILD_ID)
+    if guild:
+        print(f"Bot berada di guild: {guild.name} (ID: {guild.id})")
+    else:
+        print(f"Bot tidak berada di guild dengan ID {GUILD_ID}")
+
+    # Print loaded data for verification
+    print("Data yang dimuat dari JSON:")
+    print("User Emails:", user_emails)
+    print("User Names:", user_names)
+    print("User Phone Numbers:", user_phone_numbers)
+    print("Payment Status:", payment_status)
+    print("Role Expiry:", role_expiry)
+    print("User Members:", user_members)
+
+@bot.command()
+async def closechannel(ctx):
+    try:
+        channel = ctx.channel
+        if not ctx.author.guild_permissions.manage_channels:
+            await ctx.send('Anda tidak memiliki izin untuk menutup channel.')
+            return
+        
+        await ctx.send('Channel akan segera ditutup.')
+        
+        await channel.delete(reason='Channel ditutup oleh bot')
+    
+    except discord.Forbidden:
+        await ctx.send('Bot tidak memiliki izin untuk menghapus channel.')
+    except discord.HTTPException as e:
+        await ctx.send(f'Terjadi kesalahan: {e}')
+
+@bot.command()
+async def checkpay(ctx):
+    """Command to check payment status."""
+    user_id = ctx.author.id
+    user_payments = {oid: status for oid, status in payment_status.items() if status['user_id'] == user_id}
+
+    if not user_payments:
+        await ctx.send("❌ **Tidak ada pembayaran yang ditemukan untuk Anda.**")
+        return
+
+    response = "📜 **Status Pembayaran Anda:**\n"
+    for order_id, status in user_payments.items():
+        response += f"**Order ID:** {order_id} - **Status:** {status['status']}\n"
+
+    await ctx.send(response)
+
+# Function to save data to a JSON file
+def save_data():
+    data = {
+        "user_emails": user_emails,
+        "user_names": user_names,
+        "user_phone_numbers": user_phone_numbers,
+        "payment_status": payment_status,
+        "role_expiry": {user_id: (role.name if role else None, expiry_time) for user_id, (role, expiry_time) in role_expiry.items()},  # Store role names instead of Role objects
+        "user_members": {user_id: name for user_id, name in user_members.items()},  # Store only names
+    }
+    with open('data.json', 'w') as f:
+        json.dump(data, f)
+
+# Function to load data from a JSON file
+def load_data():
+    global user_emails, user_names, user_phone_numbers, payment_status, role_expiry, user_members
+    try:
+        with open('data.json', 'r') as f:
+            data = json.load(f)
+            user_emails = data.get("user_emails", {})
+            user_names = data.get("user_names", {})
+            user_phone_numbers = data.get("user_phone_numbers", {})
+            payment_status = data.get("payment_status", {})
+            role_expiry = {user_id: (discord.utils.get(bot.get_guild(GUILD_ID).roles, name=role_name), expiry_time) for user_id, (role_name, expiry_time) in data.get("role_expiry", {}).items()}  # Load roles by name
+            user_members = data.get("user_members", {})  # Load names only
+            
+            # Print loaded data for verification
+            print("Data yang dimuat dari JSON:")
+            print("User Emails:", user_emails)
+            print("User Names:", user_names)
+            print("User Phone Numbers:", user_phone_numbers)
+            print("Payment Status:", payment_status)
+            print("Role Expiry:", role_expiry)
+            print("User Members:", user_members)
+
+    except FileNotFoundError:
+        print("Data file not found. Starting with empty data.")
+    except json.JSONDecodeError:
+        print("Error decoding JSON data. Starting with empty data.")
 
 # FastAPI server startup
 async def start_fastapi():
@@ -312,3 +472,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("Shutting down...")
+        save_data() 
